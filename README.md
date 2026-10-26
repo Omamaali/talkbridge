@@ -34,4 +34,4 @@ Early prototype planning and development.
 
 Privacy
 
-The project aims to give users conitrol over translated audio playback and how their conversation data is handled.
+The project aims to give users control over translated audio playback and how their conversation data is handled.
