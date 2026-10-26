@@ -1,7 +1,7 @@
 
 import io
 import streamlit as st
-from deep_translator import GoogleTranslator
+from google import genai
 from gtts import gTTS
 
 st.set_page_config(
@@ -15,15 +15,21 @@ st.subheader("Speak naturally. Understand instantly.")
 st.caption("A multilingual communication platform")
 
 LANGUAGES = {
-    "العربية": "ar",
-    "English": "en",
-    "Bahasa Indonesia": "id",
-    "Français": "fr",
-    "Español": "es",
-    "Deutsch": "de",
-    "中文": "zh-CN",
-    "Türkçe": "tr",
+    "العربية": "Arabic",
+    "English": "English",
+    "Bahasa Indonesia": "Indonesian",
+    "Français": "French",
+    "Español": "Spanish",
+    "Deutsch": "German",
+    "中文": "Chinese (Simplified)",
+    "Türkçe": "Turkish",
 }
+
+# Keep the API key in Streamlit Secrets, never in this file.
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    api_key = None
 
 st.divider()
 
@@ -33,73 +39,88 @@ with col1:
     source_name = st.selectbox(
         "لغة المتحدث",
         list(LANGUAGES.keys()),
-        index=0,
+        index=0
     )
 
 with col2:
     target_name = st.selectbox(
         "لغة الترجمة",
         list(LANGUAGES.keys()),
-        index=1,
+        index=1
     )
 
-source_lang = LANGUAGES[source_name]
-target_lang = LANGUAGES[target_name]
+st.markdown("### 🎙️ كلامك")
+st.info(
+    "اكتب النص الذي تريد ترجمته. "
+    "التسجيل الصوتي المباشر سيُضاف في مرحلة لاحقة."
+)
 
-if "source_text" not in st.session_state:
-    st.session_state.source_text = ""
+source_text = st.text_area(
+    "النص الأصلي",
+    height=140,
+    placeholder="اكتب ما تريد قوله هنا...",
+    key="source_text"
+)
 
 if "translated_text" not in st.session_state:
     st.session_state.translated_text = ""
 
-st.markdown("### 🎙️ كلامك")
-
-st.info(
-    "اكتب النص الذي تريد ترجمته. "
-    "التسجيل الصوتي المباشر غير متاح في هذه النسخة."
-)
-
-st.text_area(
-    "النص الأصلي",
-    height=140,
-    placeholder="اكتب ما تريد قوله هنا...",
-    key="source_text",
-)
-
 if st.button("🌍 ترجمة النص", use_container_width=True):
-    text = st.session_state.source_text.strip()
+    text = source_text.strip()
 
     if not text:
         st.warning("اكتب النص أولًا.")
 
-    elif source_lang == target_lang:
+    elif source_name == target_name:
         st.session_state.translated_text = text
-        st.success("اللغتان متطابقتان؛ تم نسخ النص.")
+        st.success("تم نسخ النص؛ اللغتان متطابقتان.")
+
+    elif not api_key:
+        st.error(
+            "مفتاح Gemini غير موجود. "
+            "راجع إعدادات Secrets في Streamlit."
+        )
 
     else:
         try:
-            with st.spinner("جارٍ الترجمة..."):
-                result = GoogleTranslator(
-                    source=source_lang,
-                    target=target_lang,
-                ).translate(text)
+            with st.spinner("Gemini يترجم النص..."):
+                client = genai.Client(api_key=api_key)
 
-            if not result:
-                raise ValueError(
-                    "خدمة الترجمة أعادت نتيجة فارغة."
+                prompt = f"""
+You are a professional translator.
+Translate the text from {LANGUAGES[source_name]}
+into {LANGUAGES[target_name]}.
+
+Rules:
+- Preserve the original meaning and tone.
+- Use natural, fluent language.
+- Return only the translated text.
+- Do not add explanations or quotation marks.
+
+Text to translate:
+{text}
+"""
+
+                response = client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents=prompt
                 )
 
-            st.session_state.translated_text = result
-            st.success("تمت الترجمة بنجاح.")
+                result = (response.text or "").strip()
+
+                if not result:
+                    raise ValueError(
+                        "Gemini returned an empty response."
+                    )
+
+                st.session_state.translated_text = result
+                st.success("تمت الترجمة بنجاح.")
 
         except Exception as error:
-            st.error("تعذرت الترجمة.")
-            with st.expander("تفاصيل الخطأ للتشخيص"):
+            st.error("تعذرت الترجمة باستخدام Gemini.")
+            with st.expander("تفاصيل الخطأ"):
                 st.code(
                     f"{type(error).__name__}: {error}"
-                )
-                st.caption(
-                    "أرسل هذه التفاصيل للمساعدة في تحديد السبب."
                 )
 
 st.markdown("### 💬 الترجمة")
@@ -108,10 +129,13 @@ st.text_area(
     "النص المترجم",
     value=st.session_state.translated_text,
     height=140,
-    disabled=True,
+    disabled=True
 )
 
-if st.button("🔊 استمع إلى الترجمة", use_container_width=True):
+if st.button(
+    "🔊 استمع إلى الترجمة",
+    use_container_width=True
+):
     translated = st.session_state.translated_text.strip()
 
     if not translated:
@@ -122,10 +146,23 @@ if st.button("🔊 استمع إلى الترجمة", use_container_width=True):
             with st.spinner("جارٍ تجهيز الصوت..."):
                 audio_buffer = io.BytesIO()
 
+                # gTTS uses language codes, unlike Gemini.
+                tts_codes = {
+                    "العربية": "ar",
+                    "English": "en",
+                    "Bahasa Indonesia": "id",
+                    "Français": "fr",
+                    "Español": "es",
+                    "Deutsch": "de",
+                    "中文": "zh-CN",
+                    "Türkçe": "tr",
+                }
+
                 tts = gTTS(
                     text=translated,
-                    lang=target_lang,
+                    lang=tts_codes[target_name]
                 )
+
                 tts.write_to_fp(audio_buffer)
                 audio_buffer.seek(0)
 
@@ -133,7 +170,7 @@ if st.button("🔊 استمع إلى الترجمة", use_container_width=True):
 
         except Exception as error:
             st.error("تعذر إنشاء الصوت.")
-            with st.expander("تفاصيل الخطأ للتشخيص"):
+            with st.expander("تفاصيل خطأ الصوت"):
                 st.code(
                     f"{type(error).__name__}: {error}"
                 )
@@ -144,6 +181,7 @@ st.caption(
     "TalkBridge Prototype | Meeting Room • Class Room • Tour Room"
 )
 st.caption(
-    "الترجمة والصوت يعتمدان على خدمات خارجية عبر الإنترنت. "
-    "لا تدخل معلومات سرية في هذه النسخة التجريب."
+    "الترجمة تستخدم Gemini API، والصوت يستخدم gTTS. "
+    "قد تتم معالجة النصوص بواسطة خدمات خارجية؛ "
+    "تجنب إدخال المعلومات السرية."
 )
